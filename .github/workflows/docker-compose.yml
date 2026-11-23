@@ -1,0 +1,64 @@
+
+name: Docker Compose Integration Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  integration-test:
+    name: Test Flask and PostgreSQL
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create test environment
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_DB=bitsec_db
+          POSTGRES_USER=bitsec_user
+          POSTGRES_PASSWORD=test_password_123
+          DB_HOST=db
+          DB_PORT=5432
+          EOF
+
+      - name: Build and start services
+        run: docker compose up --build -d
+
+      - name: Wait for application
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:5000/health; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Application failed to become healthy"
+          docker compose logs
+          exit 1
+
+      - name: Test calculator API
+        run: |
+          response=$(curl -fsS -X POST http://localhost:5000/calculate \
+            -H "Content-Type: application/json" \
+            -d '{"operation":"add","a":10,"b":5}')
+          echo "$response"
+          echo "$response" | grep -q '"result":15.0'
+
+      - name: Test calculation history
+        run: |
+          response=$(curl -fsS http://localhost:5000/history)
+          echo "$response"
+          echo "$response" | grep -q '"result":15.0'
+
+      - name: Display service logs
+        if: always()
+        run: docker compose logs
+
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
